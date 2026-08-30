@@ -7,7 +7,7 @@ The detailed explanation of the original Snowman ornament is [here](https://gith
 This ornament has been redesigned around the newer Attiny412. The schematic and PCB have been updated to use UPDI programming and the new pinout of the Attiny412. Since these use UPDI, you will need a programmer. I am currently using a [converted Arduino Nano](https://daumemo.com/diy-updi-usb-programmer-which-can-be-made-with-cheap-hardware/) as a [jtag2updi](https://github.com/ElTangas/jtag2updi) programmer. 
 
 
-![Front](media/front.jpg)
+![Front](media/front.jpg) ![Animated](media/fox3.gif)
 
 ![PCB](media/pcb.jpg)
 
