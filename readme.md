@@ -8,9 +8,13 @@ This ornament has been redesigned around the newer Attiny412. The schematic and 
 
 Here are some pics (click for larger), and the code/resource files can be download from the bottom of the page.
 
-![schematic](media/schematic.jpg)
+
+
 ![Front](media/front.jpg)
+
 ![PCB](media/pcb.jpg)
+
+![schematic](media/schematic.jpg)
 
 
 
