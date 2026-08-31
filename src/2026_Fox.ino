@@ -18,13 +18,13 @@
 
 #include <avr/sleep.h>
 
-#define SHOW_PATTERN(pat, speed) displayChar(pat, sizeof(pat) / sizeof(uint16_t), speed)
-
 const int ButtonPin = PIN_PA2; // D3 - Pullup on the PCB (disable internal pullups)
 
 volatile bool TriggerNow = true;
 int RndNumber = 0;
-int PastRnd = 0;
+int PastRnd = -1;
+int available[8];
+int Remaining = 0;
 
 /********************** Charlieplexing setup **********************/
 #define LED_COUNT 12 // Total number of LEDs on the PCB
@@ -132,177 +132,6 @@ const uint16_t DispCurtains[] PROGMEM = { // LEDs race from top-center to bottom
 
 
 /**************************************************************************/
-/**                          Arduino Functions                           **/
-/**************************************************************************/
-
-void setup() {
-  // Auto-generate LED masks
-  for(int i = 0; i < LED_COUNT; i++) {
-    AnodeMask[i] = (1 << LEDConnections[i][0]);
-    CathodeMask[i] = (1 << LEDConnections[i][1]);
-  }
-  // initialize things
-  initGPIO();
-  initULPOsc();
-  set_sleep_mode(SLEEP_MODE_STANDBY); // Must use SLEEP_MODE_STANDBY for RTC_CNT to function - otherwise it will not wake from PWR_DOWN
-  sei(); // Enable Global Interrupts (for wakeup)
-}
-
-void loop() {
-  if (TriggerNow) {
-    // --- MAIN WAKE CODE HERE ---
-      
-    for (int demos=0; demos<3; demos++) {
-      bool Random = true;
-      if (Random) { // Random patterns
-        while (RndNumber == PastRnd) { RndNumber = random(1,9); } // Generate random pattern selection (total case statements + 1)
-        PastRnd = RndNumber; // Prevent patterns from immediately repeating
-      } else { // Sequential patterns (for testing)
-        RndNumber = (RndNumber % 8) + 1;
-      }
-      
-
-      // Random sequence
-      while (RndNumber == PastRnd) { RndNumber = random(1,9); } // Generate random pattern selection (total case statements + 1)
-      PastRnd = RndNumber; // Prevent patterns from immediately repeating
-
-      // SHOW_PATTERN(PROGMEM pattern name, speed)
-      switch (RndNumber) {
-        case 1: // Pattern 1 - All LEDs Flash
-          for (int loop = 0; loop < 4; loop++) {
-            SHOW_PATTERN(DispAllOff, 210); delay(50);
-            SHOW_PATTERN(DispAllOn, 210); delay(150);
-          }
-          break;
-
-        case 2: // Pattern 2 - 3 LEDs Race Clockwise
-          for (int loop=0; loop<2; loop++) { SHOW_PATTERN(DispRaceCW, 70); }
-          break;
-          
-        case 3: // Pattern 3 - '+' rotation
-        	for (int loop=0; loop<3; loop++) { SHOW_PATTERN(DispPlusSpin, 70); }
-          break;
-
-        case 4: // Pattern 4 - 2 LEDs Racing back and forth
-          for (int loop = 0; loop < 3; loop++) { SHOW_PATTERN(DispOscillate, 70); }
-          break;
-
-        case 5: // Pattern 5 - Top-left to bottom-right
-          for (int loop = 0; loop < 3; loop++) { SHOW_PATTERN(DispKittyCorner, 70); }
-          break;
-
-        case 6: // Pattern 6 - Counter-Clockwise
-          for (int loop = 0; loop < 2; loop++) { SHOW_PATTERN(DispRaceCCW, 70); }
-          break;
-
-        case 7: // Pattern 7 - Opposite directions
-          for (int loop = 0; loop < 3; loop++) { SHOW_PATTERN(DispCurtains, 70); }
-          break;
-
-        case 8: // Twinkle pattern
-          twinkleLEDs(70, 75, 40);
-          break;
-      }
-    }
-
-    // --- END WAKE CODE ---
-
-    // Reset timer so we get a full cycle after a button press
-    while (RTC.STATUS > 0); // Wait for RTC to be ready
-    RTC.CNT = 0; // Reset counter
-    while (RTC.STATUS > 0); // Wait for update to complete
-
-    // reset for next wake cycle
-    TriggerNow = false;
-  }
-
-  // Go to sleep
-  if (!TriggerNow) { // Prevent sleep race condition
-    // set_sleep_mode(SLEEP_MODE_STANDBY); // Set Sleep Mode (Must use SLEEP_MODE_STANDBY for RTC_CNT to function - otherwise it will not wake from PWR_DOWN)
-    sleep_enable();
-    sleep_cpu(); // Go to sleep
-
-    // ... (: SLEEPING :) ...
-
-    // Wake back up
-    // wakeUp();
-    sleep_disable();
-    initGPIO(); // initialize GPIO
-  }
-}
-
-
-/**************************************************************************/
-/**                          Display functions                           **/
-/**************************************************************************/
-
-// Twinkle effect - Turns all LEDs on and randomly shuts LED(s) off for a short duration
-void twinkleLEDs(int TranSpeed, int FramesOff, int SeqCount) {
-  boolean run = true;
-	byte arr[LED_COUNT];
-  byte k;
-	int runCnt = 0;
-	int LASTindex; // ensure the same LED isn't flickered over and over
-	int flickerCount = 1; // # of LEDs to flicker at the same time
-
-  while(run == true) 
-  {
-		for(int i = 0; i < LED_COUNT; i++) { arr[i] = 1; } // prep to turn all LEDs on
-		// Randomly pick element(s) and set to 0
-		int flickered = 0;
-		while (flickered < flickerCount) {
-      int index = random(0, (LED_COUNT));
-      if (index != LASTindex && arr[index] == 1) {
-				arr[index] = 0;
-			  LASTindex=index;
-				flickered++;
-			}
-		}
-		// Turn twinkling LEDs off
-    for(int i = 0; i < FramesOff; i++) { // repeat TranSpeed times
-      for(int j = 0; j < LED_COUNT; j++) {
-        k = arr[j];
-        if (k == 2) {
-          run = false;
-        } else if(k == 1) {
-          turnOn(j);
-          delayMicroseconds(BlinkDelay);
-          allOff();
-        } else if(k == 0) {
-          delayMicroseconds(BlinkDelay);
-        }
-      }
-    }
-		// Turn all LEDs back on
-		for(int i = 0; i < LED_COUNT; i++) { 
-      arr[i] = 1; // Reset all to 1
-    }
-    // repeat (TranSpeed-FramesOff) times
-    for(int i = 0; i < (TranSpeed-FramesOff); i++) {
-      for(int j = 0; j < LED_COUNT; j++) {
-        k = arr[j];
-        if (k == 2) {
-          run = false;
-        } else if(k == 1) {
-          turnOn(j);
-          delayMicroseconds(BlinkDelay);
-          allOff();
-        } else if(k == 0) {
-          delayMicroseconds(BlinkDelay);
-        }
-      }
-    }
-		// If SeqCount frames have been presented, exit pattern
-		if (runCnt < SeqCount ) {
-			runCnt++;
-		} else {
-	  	return;
-		}
-  }
-}
-
-
-/**************************************************************************/
 /**                     Charlieplexing functions                         **/
 /**************************************************************************/
 
@@ -323,8 +152,9 @@ void allOff() {
 }
 
 // Loads a pattern from a specific PROGMEM array
-void displayChar(const uint16_t* Pattern, uint8_t RepeatCount, int TranSpeed) {
-  for (uint8_t Frame = 0; Frame < RepeatCount; Frame++)
+template <size_t N>
+void displayChar(const uint16_t (&Pattern)[N], int TranSpeed) {
+  for (uint8_t Frame = 0; Frame < N; Frame++)
   {
     uint16_t DisplayData = pgm_read_word(&(Pattern[Frame]));
 
@@ -346,6 +176,61 @@ void displayChar(const uint16_t* Pattern, uint8_t RepeatCount, int TranSpeed) {
       }
     }
   }
+}
+
+// Twinkle effect - Turns all LEDs on and randomly shuts LED(s) off for a short duration
+void twinkleLEDs(int TranSpeed, int FramesOff, int SeqCount) {
+  uint8_t lastIndex = 255;
+  
+  for (int frame = 0; frame < SeqCount; frame++) {
+    // Select NEW random LED
+    uint8_t offIdx;
+    do {
+      offIdx = random(0, LED_COUNT);
+    } while (offIdx == lastIndex);
+    lastIndex = offIdx;
+
+    // Display total sequence frame duration (TranSpeed)
+    for (int t = 0; t < TranSpeed; t++) {
+      bool isOff = (t < FramesOff);
+
+      for (uint8_t j = 0; j < LED_COUNT; j++) {
+        // If in Off phase and current LED matches targeted index, turn off
+        if (isOff && (j == offIdx)) {
+          delayMicroseconds(BlinkDelay);
+        } else {
+          turnOn(j);
+          delayMicroseconds(BlinkDelay);
+          allOff();
+        }
+      }
+    }
+  }
+}
+
+// Generate a new random number (without repeating or using a previously used number)
+int getRndNumber(int PCnt) { // PCnt=max # of patterns
+  if (Remaining == 0) { // refill empty array
+    for (int i = 0; i < PCnt; i++) {
+      available[i] = i + 1; // {1, 2, 3, 4, 5, 6, 7, 8}
+    }
+    Remaining = PCnt;
+  }
+
+  int SelIdx = -1;
+  int RandomNumber = -1;
+
+  // Pick a random, non-sequential number. If 1 number remains and is sequential, use it anyway (prevents infinite loop)
+  do {
+    SelIdx = random(0, Remaining);
+    RandomNumber = available[SelIdx];
+  } while (Remaining > 1 && (RandomNumber == PastRnd + 1 || RandomNumber == PastRnd - 1 || RandomNumber == PastRnd));
+
+  available[SelIdx] = available[Remaining - 1]; // Remove selected number from array
+  Remaining--;
+
+  PastRnd = RandomNumber;
+  return RandomNumber;
 }
 
 
@@ -394,4 +279,98 @@ void initULPOsc(void) {
     
     // Start RTC with 1024 prescaler (RUNSTDBY is required!)
     RTC.CTRLA = RTC_PRESCALER_DIV1024_gc | RTC_RTCEN_bm | RTC_RUNSTDBY_bm;
+}
+
+
+/**************************************************************************/
+/**                          Arduino Functions                           **/
+/**************************************************************************/
+
+void setup() {
+  // Auto-generate LED masks
+  for(int i = 0; i < LED_COUNT; i++) {
+    AnodeMask[i] = (1 << LEDConnections[i][0]);
+    CathodeMask[i] = (1 << LEDConnections[i][1]);
+  }
+  // initialize things
+  initGPIO();
+  initULPOsc();
+  set_sleep_mode(SLEEP_MODE_STANDBY); // Must use SLEEP_MODE_STANDBY for RTC_CNT to function - otherwise it will not wake from PWR_DOWN
+  sei(); // Enable Global Interrupts (for wakeup)
+}
+
+
+void loop() {
+  if (TriggerNow) {
+    // --- MAIN WAKE CODE HERE ---
+      
+    for (int demos=0; demos<3; demos++) {
+      bool Random = true;
+      if (Random) {
+        RndNumber = getRndNumber(8);
+      } else {
+        RndNumber = (RndNumber % 8) + 1;
+      }
+      switch (RndNumber) {
+        case 1: // Pattern 1 - All LEDs Flash
+          for (int loop = 0; loop < 4; loop++) {
+            displayChar(DispAllOff, 210); delay(50);
+            displayChar(DispAllOn, 210); delay(150);
+          }
+          break;
+
+        case 2: // Pattern 2 - 3 LEDs Race Clockwise
+          for (int loop=0; loop<2; loop++) { displayChar(DispRaceCW, 70); }
+          break;
+          
+        case 3: // Pattern 3 - '+' rotation
+        	for (int loop=0; loop<3; loop++) { displayChar(DispPlusSpin, 70); }
+          break;
+
+        case 4: // Pattern 4 - 2 LEDs Racing back and forth
+          for (int loop = 0; loop < 3; loop++) { displayChar(DispOscillate, 70); }
+          break;
+
+        case 5: // Pattern 5 - Top-left to bottom-right
+          for (int loop = 0; loop < 3; loop++) { displayChar(DispKittyCorner, 70); }
+          break;
+
+        case 6: // Pattern 6 - Counter-Clockwise
+          for (int loop = 0; loop < 2; loop++) { displayChar(DispRaceCCW, 70); }
+          break;
+
+        case 7: // Pattern 7 - Opposite directions
+          for (int loop = 0; loop < 3; loop++) { displayChar(DispCurtains, 70); }
+          break;
+
+        case 8: // Twinkle pattern
+          twinkleLEDs(70, 75, 40);
+          break;
+      }
+    }
+
+    // --- END WAKE CODE ---
+
+    // Reset timer so we get a full cycle after a button press
+    while (RTC.STATUS > 0); // Wait for RTC to be ready
+    RTC.CNT = 0; // Reset counter
+    while (RTC.STATUS > 0); // Wait for update to complete
+
+    // reset for next wake cycle
+    TriggerNow = false;
+  }
+
+  // Go to sleep
+  if (!TriggerNow) { // Prevent sleep race condition
+    // set_sleep_mode(SLEEP_MODE_STANDBY); // Set Sleep Mode (Must use SLEEP_MODE_STANDBY for RTC_CNT to function - otherwise it will not wake from PWR_DOWN)
+    sleep_enable();
+    sleep_cpu(); // Go to sleep
+
+    // ... (: SLEEPING :) ...
+
+    // Wake back up
+    // wakeUp();
+    sleep_disable();
+    initGPIO(); // initialize GPIO
+  }
 }
