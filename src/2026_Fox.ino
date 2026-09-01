@@ -18,17 +18,14 @@
 
 #include <avr/sleep.h>
 
-const int ButtonPin = PIN_PA2; // D3 - Pullup on the PCB (disable internal pullups)
+#define SHOW_PATTERN(pat, speed) displayChar(pat, sizeof(pat) / sizeof(pat[0]), speed)
+
+constexpr uint8_t ButtonPin = PIN_PA2; // D3 - Pullup on the PCB (disable internal pullups)
+constexpr uint8_t LED_COUNT = 12; // Total number of LEDs on the PCB
+constexpr uint8_t BlinkDelay = 120; // microseconds the LED will be on, then off. It can affect brightness, but mostly affects speed
+constexpr uint8_t PatternCnt = 8; // Total number of patterns to display
 
 volatile bool TriggerNow = true;
-int RndNumber = 0;
-int PastRnd = -1;
-int available[8];
-int Remaining = 0;
-
-/********************** Charlieplexing setup **********************/
-#define LED_COUNT 12 // Total number of LEDs on the PCB
-int BlinkDelay = 120; // microseconds the LED will be on, then off. It can affect brightness, but mostly affects speed
 
 // Arrays to hold pin masks
 byte AnodeMask[LED_COUNT];
@@ -38,7 +35,7 @@ byte CathodeMask[LED_COUNT];
 //   These are NOT Arduino pin numbers (D1/D2/etc)! They are **PORTA bit positions**
 //   These numbers correspond to the # after 'PA' in the pinout diagram above (for MegaTinyCore).
 // PA6=6 (D0), PA7=7 (D1), PA1=1 (D2), PA2=2 (D3), PA3=3 (D4), PA0=0 (D5/UPDI)
-const byte LEDConnections[LED_COUNT][2] = {  
+constexpr uint8_t LEDConnections[LED_COUNT][2] = {  
   { 6 , 7 }, // LED1  (PA6/D0, PA7/D1)
   { 7 , 1 }, // LED3  (PA7/D1, PA1/D2)
   { 1 , 3 }, // LED5  (PA1/D2, PA3/D4)
@@ -79,15 +76,19 @@ const byte LEDConnections[LED_COUNT][2] = {
  *   0b010100000010 // 2nd position is D11, 4th position is D8 & 11th position is D3
  */
 
-const uint16_t DispAllOff[] PROGMEM = { // Turn everything off
+// NOTE:
+// * On modern megaAVR architectures like the ATtiny412 (AVR 0-series), Flash memory is mapped into the unified 16-bit data address space.
+// * Flash data can be read directly via regular pointer dereferencing without requiring macros like pgm_read_word().
+
+constexpr uint16_t DispAllOff[] = { // Turn everything off
   0b000000000000
 };
 
-const uint16_t DispAllOn[] PROGMEM = { // Turn everything on
+constexpr uint16_t DispAllOn[] = { // Turn everything on
   0b111111111111
 };
 
-const uint16_t DispRaceCW[] PROGMEM = { // 3 LEDs Race Clockwise
+constexpr uint16_t DispRaceCW[] = { // 3 LEDs Race Clockwise
   0b000000000100, 0b001000000100, 0b011000000100, 0b111000000000, 
   0b110010000000, 0b100010100000, 0b000110100000, 0b000100110000, 
   0b000100010010, 0b000000010011, 0b000000001011, 0b000001001001, 
@@ -97,24 +98,24 @@ const uint16_t DispRaceCW[] PROGMEM = { // 3 LEDs Race Clockwise
   0b000001001000, 0b000001000000
 };
 
-const uint16_t DispPlusSpin[] PROGMEM = { // "+" rotation
+constexpr uint16_t DispPlusSpin[] = { // "+" rotation
   0b100100000101, 0b001010011000, 0b010001100010, 0b100100000101,
   0b001010011000, 0b010001100010, 0b100100000101, 0b001010011000,
   0b010001100010, 0b100100000101, 0b001010011000, 0b010001100010
 };
 
-const uint16_t DispOscillate[] PROGMEM = { // 2 LEDs Racing back and forth
+constexpr uint16_t DispOscillate[] = { // 2 LEDs Racing back and forth
   0b000010001000, 0b100001100001, 0b010100000110, 0b001000010000,
   0b010100000110, 0b100001100001
 };
 
-const uint16_t DispKittyCorner[] PROGMEM = { // 2 LEDs race from top-left corner to bottom-right corner and back
+constexpr uint16_t DispKittyCorner[] = { // 2 LEDs race from top-left corner to bottom-right corner and back
   0b000000000100, 0b001001000000, 0b010000001000, 0b100000000001, 
   0b000010000010, 0b000000110000, 0b000100000000, 0b000000110000, 
   0b000010000010, 0b100000000001, 0b010000001000, 0b001001000000
 };
 
-const uint16_t DispRaceCCW[] PROGMEM = { // 3 LED Race Counter-Clockwise
+constexpr uint16_t DispRaceCCW[] = { // 3 LED Race Counter-Clockwise
   0b000001000000, 0b000001001000, 0b000001001001, 0b000000001011, 
   0b000000010011, 0b000100010010, 0b000100110000, 0b000110100000, 
   0b100010100000, 0b110010000000, 0b111000000000, 0b011000000100, 
@@ -124,7 +125,7 @@ const uint16_t DispRaceCCW[] PROGMEM = { // 3 LED Race Counter-Clockwise
   0b001000000100, 0b000000000100
 };
 
-const uint16_t DispCurtains[] PROGMEM = { // LEDs race from top-center to bottom-center in opposite directions
+constexpr uint16_t DispCurtains[] = { // LEDs race from top-center to bottom-center in opposite directions
   0b010000000100, 0b100001000000, 0b000010001000, 0b000000100001,
   0b000100000010, 0b000000010000, 0b000100000010, 0b000000100001,
   0b000010001000, 0b100001000000, 0b010000000100, 0b001000000000
@@ -151,25 +152,17 @@ void allOff() {
   PORTA.OUTCLR = Mask;
 }
 
-// Loads a pattern from a specific PROGMEM array
-template <size_t N>
-void displayChar(const uint16_t (&Pattern)[N], int TranSpeed) {
-  for (uint8_t Frame = 0; Frame < N; Frame++)
-  {
-    uint16_t DisplayData = pgm_read_word(&(Pattern[Frame]));
+// Loads a pattern from array reference
+void displayChar(const uint16_t* pattern, size_t count, int tranSpeed) {
+  for (size_t frame = 0; frame < count; frame++) {
+    uint16_t displayData = pattern[frame];
 
-    for (int i = 0; i < TranSpeed; i++)
-    {
-      for (int j = 0; j < LED_COUNT; j++)
-      {
-        byte k = bitRead(DisplayData, j);
-        if (k == 1)
-        {
+    for (int i = 0; i < tranSpeed; i++) {
+      for (int j = 0; j < LED_COUNT; j++) {
+        if (bitRead(displayData, j)) {
           turnOn(j);
           delayMicroseconds(BlinkDelay);
-        }
-        else
-        {
+        } else {
           delayMicroseconds(BlinkDelay);
         }
         allOff();
@@ -181,7 +174,7 @@ void displayChar(const uint16_t (&Pattern)[N], int TranSpeed) {
 // Twinkle effect - Turns all LEDs on and randomly shuts LED(s) off for a short duration
 void twinkleLEDs(int TranSpeed, int FramesOff, int SeqCount) {
   uint8_t lastIndex = 255;
-  
+
   for (int frame = 0; frame < SeqCount; frame++) {
     // Select NEW random LED
     uint8_t offIdx;
@@ -208,29 +201,36 @@ void twinkleLEDs(int TranSpeed, int FramesOff, int SeqCount) {
   }
 }
 
-// Generate a new random number (without repeating or using a previously used number)
-int getRndNumber(int PCnt) { // PCnt=max # of patterns
-  if (Remaining == 0) { // refill empty array
-    for (int i = 0; i < PCnt; i++) {
-      available[i] = i + 1; // {1, 2, 3, 4, 5, 6, 7, 8}
+// Get the next random number (Fisher-Yates Shuffle)
+int getRndNumber() {
+  static int PastRnd = -1;
+  static int RndAvailable[8];
+  static int RndIdx = PatternCnt;
+
+  if (RndIdx >= PatternCnt) { // Reshuffle if exhausted
+    for (int i = 0; i < PatternCnt; i++) { 
+      RndAvailable[i] = i + 1;
     }
-    Remaining = PCnt;
+    
+    for (int i = PatternCnt - 1; i > 0; i--) { // Fisher-Yates Shuffle
+      int idx = random(0, i + 1);
+      int k = RndAvailable[i];
+      RndAvailable[i] = RndAvailable[idx];
+      RndAvailable[idx] = k;
+    }
+    
+    // Ensure the first element of the new cycle isn't consecutive to the last element of the previous cycle
+    if (abs(RndAvailable[0] - PastRnd) <= 1 && PatternCnt > 1) {
+      int k = RndAvailable[0];
+      RndAvailable[0] = RndAvailable[1];
+      RndAvailable[1] = k;
+    }
+    
+    RndIdx = 0;
   }
 
-  int SelIdx = -1;
-  int RandomNumber = -1;
-
-  // Pick a random, non-sequential number. If 1 number remains and is sequential, use it anyway (prevents infinite loop)
-  do {
-    SelIdx = random(0, Remaining);
-    RandomNumber = available[SelIdx];
-  } while (Remaining > 1 && (RandomNumber == PastRnd + 1 || RandomNumber == PastRnd - 1 || RandomNumber == PastRnd));
-
-  available[SelIdx] = available[Remaining - 1]; // Remove selected number from array
-  Remaining--;
-
-  PastRnd = RandomNumber;
-  return RandomNumber;
+  PastRnd = RndAvailable[RndIdx];
+  return RndAvailable[RndIdx++];
 }
 
 
@@ -299,48 +299,49 @@ void setup() {
   sei(); // Enable Global Interrupts (for wakeup)
 }
 
-
 void loop() {
+  static int PatternIdx = 0;
+  
   if (TriggerNow) {
     // --- MAIN WAKE CODE HERE ---
       
     for (int demos=0; demos<3; demos++) {
       bool Random = true;
       if (Random) {
-        RndNumber = getRndNumber(8);
+        PatternIdx = getRndNumber();
       } else {
-        RndNumber = (RndNumber % 8) + 1;
+        PatternIdx = (PatternIdx % PatternCnt) + 1;
       }
-      switch (RndNumber) {
+      switch (PatternIdx) {
         case 1: // Pattern 1 - All LEDs Flash
           for (int loop = 0; loop < 4; loop++) {
-            displayChar(DispAllOff, 210); delay(50);
-            displayChar(DispAllOn, 210); delay(150);
+            SHOW_PATTERN(DispAllOff, 210); delay(50);
+            SHOW_PATTERN(DispAllOn, 210); delay(150);
           }
           break;
 
         case 2: // Pattern 2 - 3 LEDs Race Clockwise
-          for (int loop=0; loop<2; loop++) { displayChar(DispRaceCW, 70); }
+          for (int loop=0; loop<2; loop++) { SHOW_PATTERN(DispRaceCW, 70); }
           break;
           
         case 3: // Pattern 3 - '+' rotation
-        	for (int loop=0; loop<3; loop++) { displayChar(DispPlusSpin, 70); }
+        	for (int loop=0; loop<3; loop++) { SHOW_PATTERN(DispPlusSpin, 70); }
           break;
 
         case 4: // Pattern 4 - 2 LEDs Racing back and forth
-          for (int loop = 0; loop < 3; loop++) { displayChar(DispOscillate, 70); }
+          for (int loop = 0; loop < 4; loop++) { SHOW_PATTERN(DispOscillate, 70); }
           break;
 
         case 5: // Pattern 5 - Top-left to bottom-right
-          for (int loop = 0; loop < 3; loop++) { displayChar(DispKittyCorner, 70); }
+          for (int loop = 0; loop < 3; loop++) { SHOW_PATTERN(DispKittyCorner, 70); }
           break;
 
         case 6: // Pattern 6 - Counter-Clockwise
-          for (int loop = 0; loop < 2; loop++) { displayChar(DispRaceCCW, 70); }
+          for (int loop = 0; loop < 2; loop++) { SHOW_PATTERN(DispRaceCCW, 70); }
           break;
 
         case 7: // Pattern 7 - Opposite directions
-          for (int loop = 0; loop < 3; loop++) { displayChar(DispCurtains, 70); }
+          for (int loop = 0; loop < 3; loop++) { SHOW_PATTERN(DispCurtains, 70); }
           break;
 
         case 8: // Twinkle pattern
