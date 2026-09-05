@@ -14,7 +14,7 @@ This ornament has been redesigned around the newer Attiny412. The schematic and 
 
 
 
-### Compiling
+### Compiling with Arduino IDE
 
 * Install [megaTinyCore](https://github.com/SpenceKonde/megaTinyCore) using the boards manager
 * Select **Attiny412/402/212/202** from the boards list
